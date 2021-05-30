@@ -119,8 +119,11 @@ static const rcoption rcopts[] = {
 	{"unix", MAKE_IT_UNIX},
 	{"whitespace", 0},
 	{"wordbounds", WORD_BOUNDS},
+	{"codebounds", CODE_BOUNDS},
 	{"wordchars", 0},
 	{"zap", LET_THEM_ZAP},
+	{"clipboard", CLIPBOARD},
+	{"regexendbol", REGEX_END_BOL},
 #endif
 #ifdef ENABLE_COLOR
 	{"titlecolor", 0},
@@ -227,7 +230,9 @@ keystruct *strtosc(const char *input)
 	s->toggle = 0;
 #endif
 
-	if (!strcmp(input, "cancel"))
+    if (!strcmp(input, "selectall"))
+        s->func = do_select_all;
+	else if (!strcmp(input, "cancel"))
 		s->func = do_cancel;
 #ifdef ENABLE_HELP
 	else if (!strcmp(input, "help"))
@@ -482,7 +487,8 @@ keystruct *strtosc(const char *input)
 		else if (!strcmp(input, "suspendable") ||
 		         !strcmp(input, "suspendenable"))  /* Deprecated; remove in 2022. */
 			s->toggle = SUSPENDABLE;
-		else
+		else if (!strcmp(input, "clipboard"))
+		    s->toggle = CLIPBOARD;
 #endif /* !NANO_TINY */
 		{
 			free(s);
@@ -872,7 +878,7 @@ void parse_binding(char *ptr, bool dobind)
 	} else
 		newsc->ordinal = 0;
 #endif
-	/* Add the new shortcut at the start of the list. */
+	
 	newsc->next = sclist;
 	sclist = newsc;
 }
@@ -1029,20 +1035,38 @@ short color_to_short(const char *colorname, bool *vivid, bool *thick)
 		return COLOR_BLACK;
 	else if (strcmp(colorname, "normal") == 0)
 		return THE_DEFAULT;
-	else
-		for (int index = 0; index < 9; index++)
-			if (strcmp(colorname, hues[index]) == 0) {
-				if (*vivid) {
-					jot_error(N_("Color '%s' takes no prefix"), colorname);
-					return BAD_COLOR;
-				} else if (COLORS < 255)
-					return THE_DEFAULT;
-				else
-					return indices[index];
-			}
+	else {
+	    char *tilde = strchr(colorname, '~');
+	    if (tilde) {
+	        ssize_t value;
+            if (parse_num(tilde + 1, &value)) {
+                if (value >= 0 && value <= 255) {
+                    return value;
+                } else {
+                    jot_error(N_("Color '~%d' is not a valid color"), value);
+                }
+            } else {
+                jot_error(N_("Missing a color value after '~'"));
+            }
+	        return BAD_COLOR;
+	    } else {
+		    for (int index = 0; index < 9; index++) {
+    			if (strcmp(colorname, hues[index]) == 0) {
+    				if (*vivid) {
+    					jot_error(N_("Color '%s' takes no prefix"), colorname);
+    					return BAD_COLOR;
+    				} else if (COLORS < 255) {
+    					return THE_DEFAULT;
+					} else {
+    					return indices[index];
+					}
+    			}
+    		}
+		}
+	}
 
-	jot_error(N_("Color \"%s\" not understood"), colorname);
-	return BAD_COLOR;
+	jot_error(N_("Color '%s' not understood"), colorname);
+	return FALSE;
 }
 
 /* Parse the color name (or pair of color names) in the given string.
@@ -1080,7 +1104,7 @@ bool parse_combination(char *combostr, short *fg, short *bg, int *attributes)
 		*comma = '\0';
 
 	if (!comma || comma > combostr) {
-		*fg = color_to_short(combostr, &vivid, &thick);
+	    *fg = color_to_short(combostr, &vivid, &thick);
 		if (*fg == BAD_COLOR)
 			return FALSE;
 		if (vivid && !thick && COLORS > 8)
@@ -1091,7 +1115,7 @@ bool parse_combination(char *combostr, short *fg, short *bg, int *attributes)
 		*fg = THE_DEFAULT;
 
 	if (comma) {
-		*bg = color_to_short(comma + 1, &vivid, &thick);
+	    *bg = color_to_short(comma + 1, &vivid, &thick);
 		if (*bg == BAD_COLOR)
 			return FALSE;
 		if (vivid && COLORS > 8)

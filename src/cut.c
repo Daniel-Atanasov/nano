@@ -22,6 +22,11 @@
 
 #include "prototypes.h"
 
+#include <sys/wait.h>
+#include <sys/types.h>
+#include <sys/ioctl.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <string.h>
 
 /* Delete the character under the cursor. */
@@ -183,7 +188,7 @@ void chop_word(bool forward)
 	 * on the edge of the original line, then put the cursor on that
 	 * edge instead, so that lines will not be joined unexpectedly. */
 	if (!forward) {
-		do_prev_word(ISSET(WORD_BOUNDS));
+		do_prev_word(ISSET(WORD_BOUNDS), ISSET(CODE_BOUNDS));
 		if (openfile->current != is_current) {
 			if (is_current_x > 0) {
 				openfile->current = is_current;
@@ -192,7 +197,7 @@ void chop_word(bool forward)
 				openfile->current_x = strlen(openfile->current->data);
 		}
 	} else {
-		do_next_word(ISSET(AFTER_ENDS), ISSET(WORD_BOUNDS));
+		do_next_word(ISSET(AFTER_ENDS), ISSET(WORD_BOUNDS), ISSET(CODE_BOUNDS));
 		if (openfile->current != is_current &&
 							is_current->data[is_current_x] != '\0') {
 			openfile->current = is_current;
@@ -513,6 +518,117 @@ void do_snip(bool marked, bool until_eof, bool append)
 	refresh_needed = TRUE;
 }
 
+/* Copy into system clipboard */
+void copy_clipboard(void)
+{
+    /* Requires the clipboard option to be enabled otherwise does nothing */
+    if (!ISSET(CLIPBOARD)) {
+        return;
+    }
+
+    pid_t pid = fork();
+    if (pid > 0) {
+        int status;
+        waitpid(pid, &status, 0);
+        if (status == EXIT_SUCCESS) {
+            return;
+        }
+    } else if (pid != -1) {
+        size_t size = 0;
+        linestruct *line = cutbuffer;
+        while (line != NULL) {
+            size_t line_size = (line->next != NULL) * 3;
+            char *data = line->data;
+            while (data != NULL && *data != '\0') {
+                line_size += 1;
+                switch (*data++) {
+                  case '\"':
+                    line_size += 3;
+                    break;
+                  case '\'':
+                  case '{':
+                  case '}':
+                    line_size += 2;
+                    break;
+                  default:
+                    line_size += 1;
+                    break;
+                }
+            }
+
+            size += line_size;
+            line = line->next;
+        }
+
+        char *prefix = "$str = '";
+        char *suffix = "' -f [System.Environment]::NewLine, [Char] 0x22 ; Set-Clipboard $str";
+
+        size_t prefix_size = strlen(prefix);
+        size_t suffix_size = strlen(suffix);
+
+        size_t buffer_size = size + prefix_size + suffix_size + 1;
+
+        FILE *file = fopen("/home/daniel/out.txt", "w");
+        fprintf(file, "%lu\n", buffer_size);
+        fclose(file);
+
+        char *text = nmalloc(buffer_size);
+
+        strcpy(text, prefix);
+        char *it = text + prefix_size;
+
+        line = cutbuffer;
+        while (line != NULL) {
+            char *data = line->data;
+            while (data != NULL && *data != '\0') {
+                switch (*data) {
+                  case '\"':
+                    *it++ = '{';
+                    *it++ = '1';
+                    *it++ = '}';
+                    break;
+                  case '\'':
+                    *it++ = '\'';
+                    *it++ = '\'';
+                    break;
+                  case '{':
+                    *it++ = '{';
+                    *it++ = '{';
+                    break;
+                  case '}':
+                    *it++ = '}';
+                    *it++ = '}';
+                    break;
+                  default:
+                    *it++ = *data;
+                    break;
+                }
+                data++;
+            }
+            if (line->next != NULL) {
+                *it++ = '{';
+                *it++ = '0';
+                *it++ = '}';
+            }
+            line = line->next;
+        }
+
+        strcpy(it, suffix);
+
+        int fd = open("/dev/null", O_WRONLY | O_CREAT, 0666);
+        dup2(fd, STDOUT_FILENO);
+        dup2(fd, STDERR_FILENO);
+
+        execlp("powershell.exe", "-command", text, NULL);
+
+        close(fd);
+
+        exit(EXIT_FAILURE);
+    }
+
+    statusline(ALERT, "Failed to copy to clipboard");
+}
+
 /* Move text from the current buffer into the cutbuffer. */
 void cut_text(void)
 {
@@ -535,6 +651,8 @@ void cut_text(void)
 		do_snip(FALSE, FALSE, FALSE);
 #endif
 	wipe_statusbar();
+
+	copy_clipboard();
 }
 
 #ifndef NANO_TINY
@@ -555,6 +673,8 @@ void cut_till_eof(void)
 	do_snip(FALSE, TRUE, FALSE);
 	update_undo(CUT_TO_EOF);
 	wipe_statusbar();
+
+	copy_clipboard();
 }
 
 /* Erase text (current line or marked region), sending it into oblivion. */
@@ -615,6 +735,8 @@ void copy_marked_region(void)
 	topline->data = was_datastart;
 	botline->data[bot_x] = saved_byte;
 	botline->next = afterline;
+
+	copy_clipboard();
 }
 
 /* Copy text from the current buffer into the cutbuffer.  The text is either
@@ -650,8 +772,9 @@ void copy_text(void)
 	addition = make_new_node(NULL);
 	addition->data = copy_of(openfile->current->data + from_x);
 
-	if (ISSET(CUT_FROM_CURSOR))
+	if (ISSET(CUT_FROM_CURSOR)) {
 		sans_newline = !at_eol;
+	}
 
 	/* Create the cutbuffer OR add to it, depending on the mode, the position
 	 * of the cursor, and whether or not the cutbuffer is currently empty. */
@@ -683,13 +806,16 @@ void copy_text(void)
 	if ((!ISSET(CUT_FROM_CURSOR) || at_eol) && openfile->current->next) {
 		openfile->current = openfile->current->next;
 		openfile->current_x = 0;
-	} else
+	} else {
 		openfile->current_x = strlen(openfile->current->data);
+	}
 
 	edit_redraw(was_current, FLOWING);
 
 	openfile->last_action = COPY;
 	keep_cutbuffer = TRUE;
+
+	copy_clipboard();
 }
 #endif /* !NANO_TINY */
 
@@ -700,6 +826,69 @@ void paste_text(void)
 		/* The line number where we started the paste. */
 	size_t was_leftedge = 0;
 		/* The leftedge where we started the paste. */
+	linestruct *og_cutbuffer = cutbuffer;
+
+    if (ISSET(CLIPBOARD)) {
+        char buffer[64];
+        char *reason;
+        int pipes[2];
+        if (pipe(pipes) == -1) {
+            reason = "Could not set up pipe";
+            goto error;
+        }
+
+        pid_t pid = fork();
+        int status;
+        if (pid == -1) {
+            goto error;
+        } else if (pid > 0) {
+            close(pipes[1]);
+            waitpid(pid, &status, 0);
+            if (status != EXIT_SUCCESS) {
+                reason = "Process failed";
+                goto error;
+            }
+        } else {
+            if (dup2(pipes[1], STDOUT_FILENO) == -1) {
+                reason = "Could not redirect stdout";
+                goto error;
+            }
+
+            close(pipes[0]);
+
+            if (execlp("powershell.exe", "-command", "Get-Clipboard", NULL) == -1) {
+                exit(EXIT_FAILURE);
+            }
+            exit(EXIT_SUCCESS);
+        }
+
+        reason = "Reading failed";
+        int size;
+        if (ioctl(pipes[0], FIONREAD, &size) == -1) {
+            goto error;
+        }
+
+        if (size > 0) {
+            char *text = nmalloc(size + 1);
+            if (read(pipes[0], text, size) != size) {
+                goto error;
+            }
+            text[size] = '\0';
+
+            cutbuffer = convert_buffer(text, size).linetop;
+
+            free(text);
+        }
+
+        goto go;
+
+    error:
+
+        sprintf(buffer, "Failed to retrieve clipboard: %s", reason);
+        statusline(ALERT, buffer);
+    }
+
+go:
 
 	if (cutbuffer == NULL) {
 		statusbar(_("Cutbuffer is empty"));
@@ -721,6 +910,10 @@ void paste_text(void)
 	update_undo(PASTE);
 #endif
 
+    if (ISSET(CLIPBOARD) && cutbuffer != NULL) {
+        free_lines(cutbuffer);
+    }
+
 	/* If we pasted less than a screenful, don't center the cursor. */
 	if (less_than_a_screenful(was_lineno, was_leftedge))
 		focusing = FALSE;
@@ -731,4 +924,6 @@ void paste_text(void)
 	set_modified();
 	wipe_statusbar();
 	refresh_needed = TRUE;
+
+	cutbuffer = og_cutbuffer;
 }

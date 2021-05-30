@@ -1148,6 +1148,7 @@ void shortcut_init(void)
 #endif
 
 	/* Link key combos to functions in certain menus. */
+	add_to_sclist(MMOST, "^A", 0, do_select_all, 0);
 	add_to_sclist(MMOST|MBROWSER, "^M", '\r', do_enter, 0);
 	add_to_sclist(MMOST|MBROWSER, "Enter", KEY_ENTER, do_enter, 0);
 	add_to_sclist(MMOST, "^H", '\b', do_backspace, 0);
@@ -1516,6 +1517,8 @@ const char *flagtostr(int flag)
 			return N_("Suspension");
 		case LINE_NUMBERS:
 			return N_("Line numbering");
+	    case CLIPBOARD:
+	        return N_("System clipboard");
 		default:
 			die("Bad toggle -- please report a bug\n");
 			return "";

@@ -600,6 +600,93 @@ char *encode_data(char *text, size_t length)
 /* The number of bytes by which we expand the line buffer while reading. */
 #define LUMPSIZE  120
 
+textstruct convert_buffer(char *text, size_t size)
+{
+    linestruct *first_line = make_new_node(NULL);
+    linestruct *last_line = first_line;
+
+    size_t line_count = 0;
+    size_t line_length = 0;
+    size_t line_start = 0;
+
+#ifndef NANO_TINY
+	int format = 0;
+		/* 0 = Unix, 1 = DOS, 2 = Mac. */
+#endif
+
+#define WASCR (line_length > 0 && text[line_start + line_length - 1] == '\r')
+	/* Read in the entire file, byte by byte, line by line. */
+	for (int idx = 0; idx < size; idx++) {
+		char input = text[idx];
+		int next_line;
+
+		/* When the byte before the current one is a CR and we're doing
+		 * format conversion, then strip this CR when it's before a LF
+		 * OR when the file is in Mac format.  Also, when still on the
+		 * first line, set the format to either DOS (1) or Mac (2). */
+		if (input == '\n') {
+#ifndef NANO_TINY
+			if (WASCR && !ISSET(NO_CONVERT)) {
+				if (line_count == 0) {
+					format = 1;
+				}
+				line_length --;
+			}
+			next_line = idx + 1;
+		} else if ((line_count == 0 || format == 2) &&
+					WASCR && !ISSET(NO_CONVERT)) {
+			format = 2;
+			line_length--;
+			next_line = idx;
+#endif
+		} else {
+		    // TODO@Daniel:
+		    //  Probably won't work on all OS
+		    if (input != '\r') {
+		        line_length++;
+		    }
+			continue;
+		}
+
+		/* Store the data and make a new line. */
+		last_line->data = encode_data(&text[line_start], line_length);
+
+        if (idx != size - 1) {
+    		last_line->next = make_new_node(last_line);
+    		last_line = last_line->next;
+		}
+		line_count++;
+
+		/* Reset the length in preparation for the next line. */
+		line_length = (format == 2);
+		line_start = next_line;
+	}
+
+	/* If the file ended with newline, or it was entirely empty, make the
+	 * last line blank.  Otherwise, put the last read data in. */
+	if (last_line != NULL && last_line->next != NULL) {
+    	if (line_length == 0) {
+    		last_line->data = copy_of("");
+    	} else {
+#ifndef NANO_TINY
+		    /* If the final character is a CR and file conversion isn't disabled,
+    		 * strip this CR and indicate that an extra blank line is needed. */
+    		if (text[line_start + line_length - 1] == '\r' && !ISSET(NO_CONVERT)) {
+    			if (line_count == 0) {
+    				format = 2;
+    			}
+    			line_length--;
+    		}
+#endif
+    		/* Store the data of the final line. */
+    		last_line->data = encode_data(&text[line_start], line_length++);
+    	}
+	}
+#undef WASCR
+
+    return (textstruct) { .linetop=first_line, .linebot=last_line };
+}
+
 /* Read the given open file f into the current buffer.  filename should be
  * set to the name of the file.  undoable means that undo records should be
  * created and that the file does not need to be checked for writability. */

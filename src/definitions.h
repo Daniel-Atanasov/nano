@@ -298,6 +298,11 @@ typedef struct linestruct {
 #endif
 } linestruct;
 
+typedef struct textstruct {
+    linestruct *linetop;
+    linestruct *linebot;
+} textstruct;
+
 #ifndef NANO_TINY
 typedef struct groupstruct {
 	ssize_t top_line;
@@ -523,6 +528,7 @@ enum
 	TABS_TO_SPACES,
 	QUICK_BLANK,
 	WORD_BOUNDS,
+	CODE_BOUNDS,
 	NO_NEWLINES,
 	BOLD_TEXT,
 	SOFTWRAP,
@@ -541,7 +547,9 @@ enum
 	JUMPY_SCROLLING,
 	EMPTY_LINE,
 	INDICATOR,
-	BOOKSTYLE
+	BOOKSTYLE,
+	CLIPBOARD,
+	REGEX_END_BOL
 };
 
 /* Flags for the menus in which a given function should be present. */

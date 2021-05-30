@@ -2502,6 +2502,8 @@ void draw_row(int row, const char *converted, linestruct *line, size_t from_col)
 			while (regexec(varnish->start, line->data + index,
 								1, &startmatch, (index == 0) ?
 								0 : REG_NOTBOL) == 0) {
+				int reflags = (startmatch.rm_eo == 0 || ISSET(REGEX_END_BOL)) ?
+				               0 : REG_NOTBOL;
 				/* Translate the match to be relative to the
 				 * beginning of the line. */
 				startmatch.rm_so += index;
@@ -2514,8 +2516,7 @@ void draw_row(int row, const char *converted, linestruct *line, size_t from_col)
 				thetext = converted + actual_x(converted, start_col);
 
 				if (regexec(varnish->end, line->data + startmatch.rm_eo,
-								1, &endmatch, (startmatch.rm_eo == 0) ?
-								0 : REG_NOTBOL) == 0) {
+								1, &endmatch, reflags) == 0) {
 					/* Translate the end match to be relative to
 					 * the beginning of the line. */
 					endmatch.rm_so += startmatch.rm_eo;

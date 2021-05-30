@@ -141,7 +141,6 @@ void free_lines(linestruct *src)
 	delete_node(src);
 }
 
-/* Make a copy of a linestruct node. */
 linestruct *copy_node(const linestruct *src)
 {
 	linestruct *dst = nmalloc(sizeof(linestruct));
@@ -1344,6 +1343,12 @@ int do_mouse(void)
 }
 #endif /* ENABLE_MOUSE */
 
+/* Return TRUE when the given function is a marking command */
+bool wanted_to_mark(void (*func)(void))
+{
+    return func == do_select_all;
+}
+
 /* Return TRUE when the given function is a cursor-moving command. */
 bool wanted_to_move(void (*func)(void))
 {
@@ -1624,7 +1629,8 @@ void process_a_keystroke(void)
 		if (!shift_held && openfile->kind_of_mark == SOFTMARK &&
 							(openfile->current != was_current ||
 							openfile->current_x != was_x ||
-							wanted_to_move(shortcut->func))) {
+							wanted_to_move(shortcut->func)) &&
+							!wanted_to_mark(shortcut->func)) {
 			openfile->mark = NULL;
 			refresh_needed = TRUE;
 		} else if (openfile->current != was_current)

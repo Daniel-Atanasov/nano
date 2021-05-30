@@ -333,13 +333,17 @@ void precalc_multicolorinfo(void)
 			 * found, mark all the lines that are affected. */
 			while (regexec(ink->start, line->data + index, 1,
 							&startmatch, (index == 0) ? 0 : REG_NOTBOL) == 0) {
+
+				//statusline(ALERT, _("START %d END %d"), index, (int)startmatch.rm_eo);
+				int reflags = (index == 0 || ISSET(REGEX_END_BOL)) ? 0 : REG_NOTBOL;
 				/* Begin looking for an end match after the start match. */
 				index += startmatch.rm_eo;
 
+				//statusline(ALERT, _("FOUND START '%s' END %s"), , (int)startmatch.rm_eo);
 				/* If there is an end match on this line, mark the line, but
 				 * continue looking for other starts after it. */
-				if (regexec(ink->end, line->data + index, 1,
-							&endmatch, (index == 0) ? 0 : REG_NOTBOL) == 0) {
+				if (regexec(ink->end, line->data + index, 1, &endmatch,
+				            reflags) == 0) {
 					line->multidata[ink->id] = CSTARTENDHERE;
 					index += endmatch.rm_eo;
 					/* If both start and end are mere anchors, step ahead. */
@@ -357,7 +361,7 @@ void precalc_multicolorinfo(void)
 				tailline = line->next;
 
 				while (tailline != NULL) {
-					if (regexec(ink->end, tailline->data, 1, &endmatch, 0) == 0)
+					if (regexec(ink->end, tailline->data, 1, &endmatch, REG_NOTBOL) == 0)
 						break;
 					tailline = tailline->next;
 				}

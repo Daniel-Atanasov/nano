@@ -23,6 +23,24 @@
 
 #include <string.h>
 
+void do_select_all(void)
+{
+    openfile->mark = openfile->filetop;
+    openfile->mark_x = 0;
+
+    openfile->kind_of_mark = SOFTMARK;
+
+	openfile->current = openfile->filebot;
+	openfile->current_x = (inhelp) ? 0 : strlen(openfile->filebot->data);
+	openfile->placewewant = xplustabs();
+
+	/* Set the last line of the screen as the target for the cursor. */
+	openfile->current_y = editwinrows - 1;
+
+ 	refresh_needed = TRUE;
+	focusing = FALSE;
+}
+
 /* Move to the first line of the file. */
 void to_first_line(void)
 {
@@ -43,7 +61,7 @@ void to_last_line(void)
 	/* Set the last line of the screen as the target for the cursor. */
 	openfile->current_y = editwinrows - 1;
 
-	refresh_needed = TRUE;
+ 	refresh_needed = TRUE;
 	focusing = FALSE;
 }
 
@@ -261,31 +279,89 @@ void to_next_block(void)
 	edit_redraw(was_current, CENTERING);
 }
 
-/* Move to the previous word.  If allow_punct is TRUE, treat punctuation
- * as part of a word. */
-void do_prev_word(bool allow_punct)
+typedef enum {
+    SPACE, IDENTIFIER, CONTROL
+} char_type;
+
+/* Determine a character is part of an identifier, a control character
+ * or just whitespace. */
+char_type get_char_type(char ch)
 {
+    // TODO@Daniel:
+    //  See if wordchars can be used here.
+    //  The defaults might be incompatible.
+    bool upper = ch >= 'A' && ch <= 'Z';
+    bool lower = ch >= 'a' && ch <= 'z';
+    bool digit = ch >= '0' && ch <= '9';
+    if (upper || lower || digit || ch == '_') {
+        return IDENTIFIER;
+    }
+
+    if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+        return SPACE;
+    }
+
+    // NOTE@Daniel:
+    //  Everything else is assumed to be a 'control' character.
+    //  This is just an arbitrary decsion.
+    return CONTROL;
+}
+
+/* Move to the previous word.  If allow_punct is TRUE, treat punctuation
+ * as part of a word.  If code_bounds is TRUE then stop
+ * at the borders identifiers and control characters. */
+void do_prev_word(bool allow_punct, bool code_bounds)
+{
+#define current   openfile->current
+#define current_x openfile->current_x
+
 	bool seen_a_word = FALSE, step_forward = FALSE;
+	char_type initial_type;
+
+    if (current_x == 0) {
+        initial_type = SPACE;
+    } else {
+        initial_type = get_char_type(current->data[current_x - 1]);
+    }
+
+    while (code_bounds) {
+		if (current_x == 0) {
+			if (current->prev == NULL) {
+				return;
+			}
+
+			current = current->prev;
+			current_x = strlen(current->data);
+		}
+
+        if (current_x == 0) {
+            return;
+        }
+
+        if (initial_type != get_char_type(current->data[current_x - 1])) {
+            return;
+        }
+
+        current_x = step_left(current->data, current_x);
+    }
 
 	/* Move backward until we pass over the start of a word. */
 	while (TRUE) {
 		/* If at the head of a line, move to the end of the preceding one. */
-		if (openfile->current_x == 0) {
-			if (openfile->current->prev == NULL)
+		if (current_x == 0) {
+			if (current->prev == NULL)
 				break;
-			openfile->current = openfile->current->prev;
-			openfile->current_x = strlen(openfile->current->data);
+			current = current->prev;
+			current_x = strlen(current->data);
 		}
 
 		/* Step back one character. */
-		openfile->current_x = step_left(openfile->current->data,
-												openfile->current_x);
+		current_x = step_left(current->data, current_x);
 
-		if (is_word_char(openfile->current->data + openfile->current_x,
-								allow_punct)) {
+        if (is_word_char(current->data + current_x, allow_punct)) {
 			seen_a_word = TRUE;
 			/* If at the head of a line now, this surely is a word start. */
-			if (openfile->current_x == 0)
+			if (current_x == 0)
 				break;
 		} else if (seen_a_word) {
 			/* This is space now: we've overshot the start of the word. */
@@ -296,44 +372,76 @@ void do_prev_word(bool allow_punct)
 
 	if (step_forward)
 		/* Move one character forward again to sit on the start of the word. */
-		openfile->current_x = step_right(openfile->current->data,
-												openfile->current_x);
+		current_x = step_right(current->data, current_x);
+
+#undef current
+#undef current_x
 }
 
 /* Move to the next word.  If after_ends is TRUE, stop at the ends of words
  * instead of their beginnings.  If allow_punct is TRUE, treat punctuation as
- * part of a word.  Return TRUE if we started on a word, and FALSE otherwise. */
-bool do_next_word(bool after_ends, bool allow_punct)
+ * part of a word.  If code_bounds is set then stop the borders between
+ * identifiers, control characters and whitespace.
+ * Return TRUE if we started on a word, and FALSE otherwise. */
+bool do_next_word(bool after_ends, bool allow_punct, bool code_bounds)
 {
-	bool started_on_word = is_word_char(openfile->current->data +
-								openfile->current_x, allow_punct);
+#define current   openfile->current
+#define current_x openfile->current_x
+
+	bool started_on_word = is_word_char(current->data + current_x, allow_punct);
 	bool seen_space = !started_on_word;
 #ifndef NANO_TINY
 	bool seen_word = started_on_word;
 #endif
 
+	char_type initial_type;
+    char_type current_type;
+
+    if (current_x == strlen(current->data)) {
+        initial_type = SPACE;
+    } else {
+        initial_type = get_char_type(current->data[current_x]);
+    }
+
+    while (code_bounds) {
+		if (current->data[current_x] == '\0') {
+			if (current->next == NULL) {
+		    	return started_on_word;
+			}
+
+			current = current->next;
+			current_x = 0;
+			current_type = SPACE;
+		} else {
+            current_x = step_right(current->data, current_x);
+            current_type = get_char_type(current->data[current_x]);
+        }
+
+        if (initial_type != current_type) {
+            return started_on_word;
+        }
+    }
+
 	/* Move forward until we reach the start of a word. */
 	while (TRUE) {
 		/* If at the end of a line, move to the beginning of the next one. */
-		if (openfile->current->data[openfile->current_x] == '\0') {
+		if (current->data[current_x] == '\0') {
 			/* When at end of file, stop. */
-			if (openfile->current->next == NULL)
+			if (current->next == NULL)
 				break;
-			openfile->current = openfile->current->next;
-			openfile->current_x = 0;
+			current = current->next;
+			current_x = 0;
 			seen_space = TRUE;
 		} else {
 			/* Step forward one character. */
-			openfile->current_x = step_right(openfile->current->data,
-												openfile->current_x);
+			current_x = step_right(current->data, current_x);
 		}
 
 #ifndef NANO_TINY
 		if (after_ends) {
 			/* If this is a word character, continue; else it's a separator,
 			 * and if we've already seen a word, then it's a word end. */
-			if (is_word_char(openfile->current->data + openfile->current_x,
-								allow_punct))
+			if (is_word_char(current->data + current_x, allow_punct))
 				seen_word = TRUE;
 			else if (seen_word)
 				break;
@@ -342,8 +450,7 @@ bool do_next_word(bool after_ends, bool allow_punct)
 		{
 			/* If this is not a word character, then it's a separator; else
 			 * if we've already seen a separator, then it's a word start. */
-			if (!is_word_char(openfile->current->data + openfile->current_x,
-								allow_punct))
+			if (!is_word_char(current->data + current_x, allow_punct))
 				seen_space = TRUE;
 			else if (seen_space)
 				break;
@@ -351,6 +458,9 @@ bool do_next_word(bool after_ends, bool allow_punct)
 	}
 
 	return started_on_word;
+
+#undef current
+#undef current_x
 }
 
 /* Move to the previous word in the file, treating punctuation as part of a
@@ -359,7 +469,7 @@ void to_prev_word(void)
 {
 	linestruct *was_current = openfile->current;
 
-	do_prev_word(ISSET(WORD_BOUNDS));
+	do_prev_word(ISSET(WORD_BOUNDS), ISSET(CODE_BOUNDS));
 
 	edit_redraw(was_current, FLOWING);
 }
@@ -371,7 +481,7 @@ void to_next_word(void)
 {
 	linestruct *was_current = openfile->current;
 
-	do_next_word(ISSET(AFTER_ENDS), ISSET(WORD_BOUNDS));
+	do_next_word(ISSET(AFTER_ENDS), ISSET(WORD_BOUNDS), ISSET(CODE_BOUNDS));
 
 	edit_redraw(was_current, FLOWING);
 }

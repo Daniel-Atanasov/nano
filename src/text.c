@@ -2975,7 +2975,7 @@ void do_wordlinechar_count(void)
 	 * incrementing the word count for each successful step. */
 	while (openfile->current->lineno < botline->lineno ||
 				(openfile->current == botline && openfile->current_x < bot_x)) {
-		if (do_next_word(FALSE, TRUE))
+		if (do_next_word(FALSE, TRUE, ISSET(CODE_BOUNDS)))
 			words++;
 	}
 

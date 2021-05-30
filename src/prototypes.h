@@ -279,6 +279,7 @@ void switch_to_prev_buffer(void);
 void switch_to_next_buffer(void);
 void close_buffer(void);
 #endif
+textstruct convert_buffer(char *text, size_t size);
 void read_file(FILE *f, int fd, const char *filename, bool undoable);
 int open_file(const char *filename, bool new_one, FILE **f);
 char *get_next_filename(const char *name, const char *suffix);
@@ -352,6 +353,7 @@ bool has_old_position(const char *file, ssize_t *line, ssize_t *column);
 #endif
 
 /* Most functions in move.c. */
+void do_select_all(void);
 void to_first_line(void);
 void to_last_line(void);
 void do_page_up(void);
@@ -364,8 +366,8 @@ void to_para_end(void);
 #endif
 void to_prev_block(void);
 void to_next_block(void);
-void do_prev_word(bool allow_punct);
-bool do_next_word(bool after_ends, bool allow_punct);
+void do_prev_word(bool allow_punct, bool code_bounds);
+bool do_next_word(bool after_ends, bool allow_punct, bool code_bounds);
 void to_prev_word(void);
 void to_next_word(void);
 void do_home(void);
