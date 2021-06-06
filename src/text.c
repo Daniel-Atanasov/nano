@@ -25,6 +25,7 @@
 
 #include "prototypes.h"
 
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
@@ -324,25 +325,37 @@ bool comment_line(undo_type action, linestruct *line, const char *comment_seq)
 	size_t post_len = post_seq ? comment_seq_len - pre_len - 1 : 0;
 		/* Length of postfix. */
 	size_t line_len = strlen(line->data);
+    int index = 0;
 
 	if (!ISSET(NO_NEWLINES) && line == openfile->filebot)
 		return FALSE;
 
+    if (ISSET(SMART_COMMENT)) {
+        while (isspace(line->data[index])) {
+            index++;
+        }
+    }
+
 	if (action == COMMENT) {
+
 		/* Make room for the comment sequence(s), move the text right and
 		 * copy them in. */
 		line->data = nrealloc(line->data, line_len + pre_len + post_len + 1);
-		memmove(line->data + pre_len, line->data, line_len + 1);
-		memmove(line->data, comment_seq, pre_len);
-		if (post_len > 0)
+		memmove(
+		    line->data + pre_len + index,
+		    line->data + index,
+		    line_len - index + 1
+	    );
+		memmove(line->data + index, comment_seq, pre_len);
+		if (post_len > index)
 			memmove(line->data + pre_len + line_len, post_seq, post_len + 1);
 
 		openfile->totsize += pre_len + post_len;
 
 		/* If needed, adjust the position of the mark and of the cursor. */
-		if (line == openfile->mark && openfile->mark_x > 0)
+		if (line == openfile->mark && openfile->mark_x > index)
 			openfile->mark_x += pre_len;
-		if (line == openfile->current && openfile->current_x > 0) {
+		if (line == openfile->current && openfile->current_x > index) {
 			openfile->current_x += pre_len;
 			openfile->placewewant = xplustabs();
 		}
@@ -351,21 +364,41 @@ bool comment_line(undo_type action, linestruct *line, const char *comment_seq)
 	}
 
 	/* If the line is commented, report it as uncommentable, or uncomment it. */
-	if (strncmp(line->data, comment_seq, pre_len) == 0 && (post_len == 0 ||
-				strcmp(line->data + line_len - post_len, post_seq) == 0)) {
+	if (strncmp(line->data + index, comment_seq, pre_len) == 0 &&
+	    (post_len == 0 || strcmp(line->data + line_len - post_len, post_seq) == 0)) {
 
 		if (action == PREFLIGHT)
 			return TRUE;
 
 		/* Erase the comment prefix by moving the non-comment part. */
-		memmove(line->data, line->data + pre_len, line_len - pre_len);
+		memmove(
+		    line->data + index,
+		    line->data + index + pre_len,
+		    line_len - pre_len - index
+	    );
 		/* Truncate the postfix if there was one. */
 		line->data[line_len - pre_len - post_len] = '\0';
 
 		openfile->totsize -= pre_len + post_len;
 
 		/* Adjust the positions of mark and cursor, when needed. */
-		compensate_leftward(line, pre_len);
+        if (ISSET(SMART_COMMENT)) {
+#define current_x openfile->current_x
+#define mark_x    openfile->mark_x
+
+    		if (openfile->current == line && current_x > index) {
+    		    current_x = MAX(index, current_x - pre_len);
+    		}
+    		if (openfile->mark == line && mark_x > index) {
+    		    mark_x = MAX(index, mark_x - pre_len);
+    		}
+    		openfile->placewewant = xplustabs();
+
+#undef current_x
+#undef mark_x
+		} else {
+		    compensate_leftward(line, pre_len);
+		}
 
 		return TRUE;
 	}

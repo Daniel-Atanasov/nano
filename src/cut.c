@@ -568,10 +568,6 @@ void copy_clipboard(void)
 
         size_t buffer_size = size + prefix_size + suffix_size + 1;
 
-        FILE *file = fopen("/home/daniel/out.txt", "w");
-        fprintf(file, "%lu\n", buffer_size);
-        fclose(file);
-
         char *text = nmalloc(buffer_size);
 
         strcpy(text, prefix);
@@ -830,7 +826,7 @@ void paste_text(void)
 
     if (ISSET(CLIPBOARD)) {
         char buffer[64];
-        char *reason;
+        char *reason = "Failed to read clipboard";
         int pipes[2];
         if (pipe(pipes) == -1) {
             reason = "Could not set up pipe";
@@ -862,7 +858,6 @@ void paste_text(void)
             exit(EXIT_SUCCESS);
         }
 
-        reason = "Reading failed";
         int size;
         if (ioctl(pipes[0], FIONREAD, &size) == -1) {
             goto error;

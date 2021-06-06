@@ -339,12 +339,11 @@ void precalc_multicolorinfo(void)
 				/* Begin looking for an end match after the start match. */
 				index += startmatch.rm_eo;
 
-				//statusline(ALERT, _("FOUND START '%s' END %s"), , (int)startmatch.rm_eo);
 				/* If there is an end match on this line, mark the line, but
 				 * continue looking for other starts after it. */
 				if (regexec(ink->end, line->data + index, 1, &endmatch,
 				            reflags) == 0) {
-					line->multidata[ink->id] = CSTARTENDHERE;
+				    line->multidata[ink->id] = CSTARTENDHERE;
 					index += endmatch.rm_eo;
 					/* If both start and end are mere anchors, step ahead. */
 					if (startmatch.rm_so == startmatch.rm_eo &&

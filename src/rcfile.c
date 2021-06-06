@@ -124,6 +124,7 @@ static const rcoption rcopts[] = {
 	{"zap", LET_THEM_ZAP},
 	{"clipboard", CLIPBOARD},
 	{"regexendbol", REGEX_END_BOL},
+	{"smartcomment", SMART_COMMENT},
 #endif
 #ifdef ENABLE_COLOR
 	{"titlecolor", 0},
@@ -878,7 +879,6 @@ void parse_binding(char *ptr, bool dobind)
 	} else
 		newsc->ordinal = 0;
 #endif
-	
 	newsc->next = sclist;
 	sclist = newsc;
 }
