@@ -550,7 +550,9 @@ enum
 	BOOKSTYLE,
 	CLIPBOARD,
 	REGEX_END_BOL,
-	SMART_COMMENT
+	SMART_COMMENT,
+	ADVANCING_COMMENT,
+	ALIGNED_COMMENT
 };
 
 /* Flags for the menus in which a given function should be present. */

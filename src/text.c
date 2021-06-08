@@ -337,6 +337,19 @@ bool comment_line(undo_type action, linestruct *line, const char *comment_seq)
     }
 
 	if (action == COMMENT) {
+        if (ISSET(ALIGNED_COMMENT) && line->prev != NULL) {
+            int idx = 0;
+            linestruct *prev = line->prev;
+
+            while (isspace(prev->data[idx])) {
+                idx++;
+            }
+
+            if (idx < index &&
+                    strncmp(prev->data + idx, comment_seq, pre_len) == 0) {
+                index = idx;
+            }
+        }
 
 		/* Make room for the comment sequence(s), move the text right and
 		 * copy them in. */
@@ -353,11 +366,17 @@ bool comment_line(undo_type action, linestruct *line, const char *comment_seq)
 		openfile->totsize += pre_len + post_len;
 
 		/* If needed, adjust the position of the mark and of the cursor. */
-		if (line == openfile->mark && openfile->mark_x > index)
-			openfile->mark_x += pre_len;
-		if (line == openfile->current && openfile->current_x > index) {
-			openfile->current_x += pre_len;
+		if (ISSET(ADVANCING_COMMENT) && openfile->mark == NULL &&
+		                                openfile->current == line) {
+	        openfile->current = openfile->current->next;
 			openfile->placewewant = xplustabs();
+		} else {
+    		if (line == openfile->mark && openfile->mark_x >= index)
+    			openfile->mark_x += pre_len;
+    		if (line == openfile->current && openfile->current_x >= index) {
+    			openfile->current_x += pre_len;
+    			openfile->placewewant = xplustabs();
+    		}
 		}
 
 		return TRUE;
@@ -382,22 +401,28 @@ bool comment_line(undo_type action, linestruct *line, const char *comment_seq)
 		openfile->totsize -= pre_len + post_len;
 
 		/* Adjust the positions of mark and cursor, when needed. */
-        if (ISSET(SMART_COMMENT)) {
+		if (ISSET(ADVANCING_COMMENT) && openfile->mark == NULL &&
+		                                openfile->current == line) {
+	        openfile->current = openfile->current->next;
+			openfile->placewewant = xplustabs();
+		} else {
+            if (ISSET(SMART_COMMENT)) {
 #define current_x openfile->current_x
 #define mark_x    openfile->mark_x
 
-    		if (openfile->current == line && current_x > index) {
-    		    current_x = MAX(index, current_x - pre_len);
-    		}
-    		if (openfile->mark == line && mark_x > index) {
-    		    mark_x = MAX(index, mark_x - pre_len);
-    		}
-    		openfile->placewewant = xplustabs();
+        		if (openfile->current == line && current_x > index) {
+        		    current_x = MAX(index, current_x - pre_len);
+        		}
+        		if (openfile->mark == line && mark_x > index) {
+        		    mark_x = MAX(index, mark_x - pre_len);
+        		}
+        		openfile->placewewant = xplustabs();
 
 #undef current_x
 #undef mark_x
-		} else {
-		    compensate_leftward(line, pre_len);
+    		} else {
+    		    compensate_leftward(line, pre_len);
+    		}
 		}
 
 		return TRUE;

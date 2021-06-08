@@ -125,6 +125,8 @@ static const rcoption rcopts[] = {
 	{"clipboard", CLIPBOARD},
 	{"regexendbol", REGEX_END_BOL},
 	{"smartcomment", SMART_COMMENT},
+	{"advancingcomment", ADVANCING_COMMENT},
+	{"alignedcomment", ALIGNED_COMMENT},
 #endif
 #ifdef ENABLE_COLOR
 	{"titlecolor", 0},
