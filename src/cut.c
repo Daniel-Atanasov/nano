@@ -526,103 +526,116 @@ void copy_clipboard(void)
         return;
     }
 
-    pid_t pid = fork();
-    if (pid > 0) {
-        int status;
-        waitpid(pid, &status, 0);
-        if (status == EXIT_SUCCESS) {
-            return;
-        }
-    } else if (pid != -1) {
-        size_t size = 0;
-        linestruct *line = cutbuffer;
-        while (line != NULL) {
-            size_t line_size = (line->next != NULL) * 3;
-            char *data = line->data;
-            while (data != NULL && *data != '\0') {
-                line_size += 1;
-                switch (*data++) {
-                  case '\"':
-                    line_size += 3;
-                    break;
-                  case '\'':
-                  case '{':
-                  case '}':
-                    line_size += 2;
-                    break;
-                  default:
-                    line_size += 1;
-                    break;
-                }
-            }
+    // NOTE@Daniel:
+    //  What this does:
+    //    - Write the cutbuffer to a temporary file
+    //    - Cat the file and redirect the output to clip.exe's stdin
+    //
+    //  This is much faster than running powershell
 
-            size += line_size;
-            line = line->next;
-        }
+    char *reason = "Unknown";
 
-        char *prefix = "$str = '";
-        char *suffix = "' -f [System.Environment]::NewLine, [Char] 0x22 ; Set-Clipboard $str";
+    FILE *file = NULL;
+    char *tempname = NULL;
 
-        size_t prefix_size = strlen(prefix);
-        size_t suffix_size = strlen(suffix);
+    int pipes[2];
 
-        size_t buffer_size = size + prefix_size + suffix_size + 1;
+    if (pipe(pipes) == -1) {
+        reason = "Pipe create";
+        goto error;
+    }
 
-        char *text = nmalloc(buffer_size);
+    tempname = safe_tempfile(&file);
+    if (tempname == NULL) {
+        reason = "File create";
+        goto error;
+    }
 
-        strcpy(text, prefix);
-        char *it = text + prefix_size;
-
-        line = cutbuffer;
-        while (line != NULL) {
-            char *data = line->data;
-            while (data != NULL && *data != '\0') {
-                switch (*data) {
-                  case '\"':
-                    *it++ = '{';
-                    *it++ = '1';
-                    *it++ = '}';
-                    break;
-                  case '\'':
-                    *it++ = '\'';
-                    *it++ = '\'';
-                    break;
-                  case '{':
-                    *it++ = '{';
-                    *it++ = '{';
-                    break;
-                  case '}':
-                    *it++ = '}';
-                    *it++ = '}';
-                    break;
-                  default:
-                    *it++ = *data;
-                    break;
-                }
-                data++;
-            }
-            if (line->next != NULL) {
-                *it++ = '{';
-                *it++ = '0';
-                *it++ = '}';
-            }
-            line = line->next;
+    linestruct *line = cutbuffer;
+    while (line != NULL) {
+        size_t size = strlen(line->data);
+        if (size != fwrite(line->data, 1, size, file)) {
+            reason = "File write";
+            goto error;
         }
 
-        strcpy(it, suffix);
+        if (line->next != NULL) {
+            char nl = '\n';
+            if (1 != fwrite(&nl, 1, 1, file)) {
+                reason = "File write";
+                goto error;
+            }
+        }
 
-        int fd = open("/dev/null", O_WRONLY | O_CREAT, 0666);
-        dup2(fd, STDOUT_FILENO);
-        dup2(fd, STDERR_FILENO);
+        line = line->next;
+    }
+    fflush(file);
 
-        execlp("powershell.exe", "-command", text, NULL);
+    pid_t clip;
+    pid_t cat = fork();
+    if (cat == -1) {
+        reason = "Fork";
+        goto error;
+    }
 
-        close(fd);
+    if (cat > 0) {
+        clip = fork();
 
+        // If we can't even fork() successfully, then kill it and hope everything works out
+        if (clip == -1) {
+            reason = "Fork";
+            kill(cat, SIGKILL);
+            goto error;
+        }
+
+        if (clip > 0) {
+            close(pipes[STDIN_FILENO]);
+            close(pipes[STDOUT_FILENO]);
+
+            int status = EXIT_FAILURE;
+            waitpid(cat, &status, 0);
+            if (status != EXIT_SUCCESS) {
+                reason = "Child failed";
+                goto error;
+            }
+
+            status = EXIT_FAILURE;
+            waitpid(clip, &status, 0);
+            if (status != EXIT_SUCCESS) {
+                reason = "Child failed";
+                goto error;
+            }
+
+            goto success;
+        }
+
+        if (clip == 0) {
+            dup2(pipes[STDIN_FILENO], STDIN_FILENO);
+            close(pipes[STDOUT_FILENO]);
+            execlp("clip.exe", "clip.exe", NULL);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    // Make sure to exit properly in case execlp() fails
+    if (cat == 0) {
+        dup2(pipes[STDOUT_FILENO], STDOUT_FILENO);
+        close(pipes[STDIN_FILENO]);
+        execlp("cat", "cat", tempname, NULL);
         exit(EXIT_FAILURE);
     }
 
-    statusline(ALERT, "Failed to copy to clipboard");
+error:
+    statusline(ALERT, _("Failed to copy clipboard: %s"), reason);
+
+success:
+    free(tempname);
+    if (file != NULL) {
+        fclose(file);
+    }
+
+    close(pipes[0]);
+    close(pipes[1]);
 }
 
 /* Move text from the current buffer into the cutbuffer. */
@@ -815,6 +828,63 @@ void copy_text(void)
 }
 #endif /* !NANO_TINY */
 
+static char *run_child(const char *file, char *const argv[], int *size)
+{
+    int pipes[2];
+    if (pipe(pipes) == -1) {
+        return NULL;
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        int result = dup2(pipes[1], STDOUT_FILENO);
+
+        close(pipes[0]);
+
+        if (result != -1) {
+            execvp(file, argv);
+        }
+
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid > 0) {
+        int s = 0;
+        int status = EXIT_FAILURE;
+        waitpid(pid, &status, 0);
+        if (status != EXIT_SUCCESS) {
+            goto error;
+        }
+
+        if (ioctl(pipes[0], FIONREAD, &s) == -1) {
+            goto error;
+        }
+
+        if (s > 0) {
+            char *text = nmalloc(s + 1);
+            if (read(pipes[0], text, s) != s) {
+                goto error;
+            }
+            text[s] = '\0';
+
+            close(pipes[0]);
+            close(pipes[1]);
+
+            if (size != NULL) {
+                *size = s;
+            }
+
+            return text;
+        }
+    }
+
+error:
+    close(pipes[0]);
+    close(pipes[1]);
+
+    return NULL;
+}
+
 /* Copy text from the cutbuffer into the current buffer. */
 void paste_text(void)
 {
@@ -824,66 +894,75 @@ void paste_text(void)
 		/* The leftedge where we started the paste. */
 	linestruct *og_cutbuffer = cutbuffer;
 
+	cutbuffer = NULL;
+
     if (ISSET(CLIPBOARD)) {
-        char buffer[64];
+        char script[] =
+            "ClipBoard = CreateObject(\"HTMLFile\").parentWindow.clipboardData.getData(\"Text\")\n"
+            "If IsNull(ClipBoard) Then ClipBoard = \"\"\n"
+            "Wscript.Echo ClipBoard\n";
+        int script_size = sizeof(script) - 1;
+
         char *reason = "Failed to read clipboard";
-        int pipes[2];
-        if (pipe(pipes) == -1) {
-            reason = "Could not set up pipe";
+
+        char *temp_path = NULL;
+        char *real_path = NULL;
+        char *result = NULL;
+
+        int size = 0;
+
+        FILE *file = NULL;
+
+        temp_path = safe_tempfile(&file);
+        if (temp_path == NULL) {
+            reason = "Could not create a temporary file";
             goto error;
         }
 
-        pid_t pid = fork();
-        int status;
-        if (pid == -1) {
-            goto error;
-        } else if (pid > 0) {
-            close(pipes[1]);
-            waitpid(pid, &status, 0);
-            if (status != EXIT_SUCCESS) {
-                reason = "Process failed";
-                goto error;
-            }
-        } else {
-            if (dup2(pipes[1], STDOUT_FILENO) == -1) {
-                reason = "Could not redirect stdout";
-                goto error;
-            }
-
-            close(pipes[0]);
-
-            if (execlp("powershell.exe", "-command", "Get-Clipboard", NULL) == -1) {
-                exit(EXIT_FAILURE);
-            }
-            exit(EXIT_SUCCESS);
-        }
-
-        int size;
-        if (ioctl(pipes[0], FIONREAD, &size) == -1) {
+        if (script_size != fwrite(script, 1, script_size, file)) {
+            reason = "Could not write to temporary file";
             goto error;
         }
 
-        if (size > 0) {
-            char *text = nmalloc(size + 1);
-            if (read(pipes[0], text, size) != size) {
-                goto error;
-            }
-            text[size] = '\0';
-
-            cutbuffer = convert_buffer(text, size).linetop;
-
-            free(text);
+        if (0 != fflush(file)) {
+            reason = "Could not flush temporary file";
+            goto error;
         }
 
-        goto go;
+        real_path = run_child("wslpath", (char*[]) { "wslpath", "-w", temp_path, NULL }, &size);
+        if (real_path == NULL) {
+            reason = "Failed to convert path";
+            goto error;
+        }
+        real_path[size - 1] = '\0';
+
+        result = run_child(
+            "cscript.exe",
+            (char*[]) { "cscript.exe", "//E:VBScript", real_path, NULL },
+            &size
+        );
+        if (result == NULL) {
+            reason = "VBS failed";
+            goto error;
+        }
+
+        cutbuffer = convert_buffer(result, size).linetop;
+
+        goto success;
 
     error:
 
-        sprintf(buffer, "Failed to retrieve clipboard: %s", reason);
-        statusline(ALERT, buffer);
-    }
+        statusline(ALERT, _("Failed to retrieve clipboard: %s"), reason);
 
-go:
+    success:
+        free(temp_path);
+        free(real_path);
+        free(result);
+
+        if (file != NULL) {
+            fclose(file);
+        }
+    }
 
 	if (cutbuffer == NULL) {
 		statusbar(_("Cutbuffer is empty"));
