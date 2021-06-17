@@ -297,7 +297,7 @@ char_type get_char_type(char ch)
         return IDENTIFIER;
     }
 
-    if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+    if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\0') {
         return SPACE;
     }
 
@@ -329,20 +329,26 @@ void do_prev_word(bool allow_punct, bool code_bounds)
 			if (current->prev == NULL) {
 				return;
 			}
-
 			current = current->prev;
 			current_x = strlen(current->data);
+		} else {
+		    current_x = step_left(current->data, current_x);
 		}
 
+        char_type type;
         if (current_x == 0) {
-            return;
+            linestruct *prev = current->prev;
+            if (prev == NULL) {
+                return;
+            }
+            type = get_char_type(prev->data[strlen(prev->data) - 1]);
+        } else {
+            type = get_char_type(current->data[current_x - 1]);
         }
 
-        if (initial_type != get_char_type(current->data[current_x - 1])) {
+        if (initial_type != type) {
             return;
         }
-
-        current_x = step_left(current->data, current_x);
     }
 
 	/* Move backward until we pass over the start of a word. */
@@ -395,7 +401,6 @@ bool do_next_word(bool after_ends, bool allow_punct, bool code_bounds)
 #endif
 
 	char_type initial_type;
-    char_type current_type;
 
     if (current_x == strlen(current->data)) {
         initial_type = SPACE;
@@ -404,20 +409,28 @@ bool do_next_word(bool after_ends, bool allow_punct, bool code_bounds)
     }
 
     while (code_bounds) {
-		if (current->data[current_x] == '\0') {
+		if (current_x == strlen(current->data)) {
 			if (current->next == NULL) {
 		    	return started_on_word;
 			}
 
 			current = current->next;
 			current_x = 0;
-			current_type = SPACE;
 		} else {
             current_x = step_right(current->data, current_x);
-            current_type = get_char_type(current->data[current_x]);
         }
+        char_type type;
+		if (current_x == strlen(current->data)) {
+		    linestruct *next = current->next;
+		    if (next == NULL) {
+		        return started_on_word;
+		    }
+            type = get_char_type(next->data[0]);
+		} else {
+            type = get_char_type(current->data[current_x]);
+		}
 
-        if (initial_type != current_type) {
+        if (initial_type != type) {
             return started_on_word;
         }
     }
