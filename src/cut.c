@@ -533,6 +533,9 @@ void copy_clipboard(void)
     //
     //  This is much faster than running powershell
 
+    // TODO@Daniel:
+    //  Using cat might not be necessary
+
     char *reason = "Unknown";
 
     FILE *file = NULL;
@@ -610,9 +613,17 @@ void copy_clipboard(void)
         }
 
         if (clip == 0) {
+            char * clip;
+
+#ifdef __APPLE__
+            clip = "pbcopy";
+#else
+            clip = "clip.exe";
+#endif
+
             dup2(pipes[STDIN_FILENO], STDIN_FILENO);
             close(pipes[STDOUT_FILENO]);
-            execlp("clip.exe", "clip.exe", NULL);
+            execlp(clip, clip, NULL);
             exit(EXIT_FAILURE);
         }
     }
@@ -897,12 +908,6 @@ void paste_text(void)
 	cutbuffer = NULL;
 
     if (ISSET(CLIPBOARD)) {
-        char script[] =
-            "ClipBoard = CreateObject(\"HTMLFile\").parentWindow.clipboardData.getData(\"Text\")\n"
-            "If IsNull(ClipBoard) Then ClipBoard = \"\"\n"
-            "Wscript.Echo ClipBoard\n";
-        int script_size = sizeof(script) - 1;
-
         char *reason = "Failed to read clipboard";
 
         char *temp_path = NULL;
@@ -912,6 +917,14 @@ void paste_text(void)
         int size = 0;
 
         FILE *file = NULL;
+
+#ifndef __APPLE__
+
+        char script[] =
+            "ClipBoard = CreateObject(\"HTMLFile\").parentWindow.clipboardData.getData(\"Text\")\n"
+            "If IsNull(ClipBoard) Then ClipBoard = \"\"\n"
+            "Wscript.Echo ClipBoard\n";
+        int script_size = sizeof(script) - 1;
 
         temp_path = safe_tempfile(&file);
         if (temp_path == NULL) {
@@ -941,8 +954,12 @@ void paste_text(void)
             (char*[]) { "cscript.exe", "//E:VBScript", real_path, NULL },
             &size
         );
+
+#else
+        result = run_child("pbpaste", (char*[]) { "pbpaste", NULL }, &size);
+#endif
         if (result == NULL) {
-            reason = "VBS failed";
+            reason = "Child failed";
             goto error;
         }
 
