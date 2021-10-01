@@ -633,8 +633,13 @@ textstruct convert_buffer(char *text, size_t size)
 
 		line_count++;
 		line_start = next_line;
+
+		/* We make sure that the second byte in a CRLF sequence gets skipped,
+		 * and that the next read character is not part of this line. */
+		idx = line_start - 1;
 	}
 
+#ifdef __APPLE__
     /* If line_start and size are equal, this means that the last thing we found
      * was a newline (regardless of what sequence), so we make sure
      * the last line is empty. Otherwise, we add the rest of the text. */
@@ -643,6 +648,17 @@ textstruct convert_buffer(char *text, size_t size)
     } else {
         last_line->data = encode_data(&text[line_start], size - line_start);
     }
+#else
+    {
+        /* NOTE@Daniel:
+         *   There is always an extra line ending added when pasting in WSL.
+         *   In that case, all text is read, but we need to remove the last empty line. */
+        linestruct *real_line = last_line->prev;
+        real_line->next = NULL;
+        free(last_line);
+        last_line = real_line;
+    }
+#endif
 
     return (textstruct) { .linetop=first_line, .linebot=last_line };
 }
